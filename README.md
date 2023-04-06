@@ -1,4 +1,4 @@
-# Quilbert: A Python AI Voice Assistant with State Machine Design
+# Quilbert
 [[github]](https://github.com/rowland-208/quilbert) [[pypi]](https://pypi.org/project/quilbert/)
 
 Quilbert is a GPT powered AI voice assistant built using Python.
