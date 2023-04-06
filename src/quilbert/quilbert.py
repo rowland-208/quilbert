@@ -1,3 +1,16 @@
+"""Quilbert is a GPT powered AI voice assistant built using Python.
+This project utilizes a state machine design pattern
+to efficiently handle user input, process it,
+and provide relevant responses.
+With Quilbert, you can easily access information,
+ask questions, and receive helpful responses using only your voice.
+
+This file contains the VoiceAssistant class.
+Running
+>>> VoiceAssistant()
+will start the state machine in the sleep state.
+This state listens for the wake word "porcupine" and transitions to the listening state.
+"""
 import logging
 import os
 import string
@@ -26,6 +39,8 @@ STOP_WORDS = [
 # Only picovoice porcupine model defaults are supported
 WAKE_WORDS = ["porcupine"]
 
+WHISPER_OPTIONS = whisper.DecodingOptions(fp16=False, language="en")
+
 punction_removal_translator = str.maketrans("", "", string.punctuation)
 
 class VoiceAssistant(statemachine.StateMachine):
@@ -44,10 +59,11 @@ class VoiceAssistant(statemachine.StateMachine):
 
         # Initialize the speech recognition model
         self.stt_model = whisper.load_model("small")
-        self.stt_options = whisper.DecodingOptions(fp16=False, language="en")
 
         # Initialize the wake word detector
-        self.ww_handle = pvporcupine.create(access_key=os.environ.get('PICOVOICE_ACCESS_KEY'), keywords=WAKE_WORDS)
+        self.ww_handle = pvporcupine.create(
+            access_key=os.environ.get('PICOVOICE_ACCESS_KEY'), keywords=WAKE_WORDS
+        )
 
         # Initialize the audio service
         self.audio = pyaudio.PyAudio()
@@ -61,6 +77,7 @@ class VoiceAssistant(statemachine.StateMachine):
         super().__init__(self)
 
     def open_audio_stream(self):
+        """Open a stream to the default audio input device."""
         self.stream = self.audio.open(
             rate=self.ww_handle.sample_rate,
             channels=1,
@@ -70,12 +87,14 @@ class VoiceAssistant(statemachine.StateMachine):
         )
 
     def close_audio_stream(self):
+        """Close the stream to the default audio input device."""
         self.stream.stop_stream()
         self.stream.close()
-    
+
     def get_audio_buffer(self):
-        bytes = self.stream.read(self.ww_handle.frame_length)
-        data = struct.unpack_from("h" * self.ww_handle.frame_length, bytes)
+        """Read a buffer of audio data from the default audio input device."""
+        audio_bytes = self.stream.read(self.ww_handle.frame_length)
+        data = struct.unpack_from("h" * self.ww_handle.frame_length, audio_bytes)
         return data
 
     def get_signal(self):
@@ -86,6 +105,7 @@ class VoiceAssistant(statemachine.StateMachine):
         return data
 
     def on_enter_sleeping(self):
+        """Listen for the wake word and transition to the listening state."""
         logging.debug("sleeping")
         while True:
             data = self.get_audio_buffer()
@@ -95,6 +115,7 @@ class VoiceAssistant(statemachine.StateMachine):
                 return
 
     def on_enter_listening(self):
+        """Listen for user input and transition to the processing state."""
         logging.debug("listening")
         self.buffer = [None for _ in range(1024)]
         vad_handle = pvcobra.create(access_key=os.environ.get('PICOVOICE_ACCESS_KEY'))
@@ -116,12 +137,13 @@ class VoiceAssistant(statemachine.StateMachine):
         self.sleep()
 
     def on_enter_processing(self):
+        """Process user input and transition to the listening state."""
         logging.debug("processing")
         self.close_audio_stream()
 
         data = whisper.pad_or_trim(self.get_signal())
         mel = whisper.log_mel_spectrogram(data).to(self.stt_model.device)
-        result = whisper.decode(self.stt_model, mel, self.stt_options)
+        result = whisper.decode(self.stt_model, mel, WHISPER_OPTIONS)
         logging.debug(result.text)
 
         if result.text.lower().translate(punction_removal_translator) in STOP_WORDS:
@@ -138,8 +160,9 @@ class VoiceAssistant(statemachine.StateMachine):
         logging.debug(response)
         self.tts_engine.say(response)
         self.tts_engine.runAndWait()
-        
+
         self.listen()
 
     def on_exit_processing(self):
+        """Reopen stream to the default audio input device after processing."""
         self.open_audio_stream()
